@@ -123,6 +123,20 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
         return;
       }
 
+      print('appDir : ${appDir}');
+      print('AppDir path : ${appDir.path}');
+      print('AppDir parent path : ${appDir.parent.path}');
+      print('AppDir parent.parent path : ${appDir.parent.parent.path}');
+      print(
+        'AppDir parent.parent.parent path : ${appDir.parent.parent.parent.path}',
+      );
+      print(
+        'AppDir parent.parent.parent.parent path : ${appDir.parent.parent.parent.parent.path}',
+      );
+      print(
+        '---AppDir parent.parent.parent.parent Pictures path : ${path.join(appDir.parent.parent.parent.parent.path, 'Pictures')}',
+      );
+
       // Create the destination path
       final destinationDir = Directory(
         path.join(
@@ -132,6 +146,8 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
         ),
       );
 
+      print('destinationDir : ${destinationDir}');
+
       // Create directory if it doesn't exist
       if (!await destinationDir.exists()) {
         await destinationDir.create(recursive: true);
@@ -140,10 +156,11 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
       // Generate destination file path
       final fileName = path.basename(file.path);
       print('fileName : ${fileName}');
-      print('file.path : ${file.path}');
+
+      print('sourcePath : ${file.path}');
 
       final destinationPath = path.join(destinationDir.path, fileName);
-      print('Destination directory: ${destinationDir.path}');
+      print('destinationPath : ${destinationPath}');
 
       // Move the file using our plugin
       setState(() => _statusMessage = 'Moving photo...');

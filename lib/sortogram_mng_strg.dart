@@ -42,7 +42,7 @@ class SortogramMngStrg {
     required String destinationPath,
   }) async {
     debugPrint(
-      '***************************Moving image...***************************',
+      '\n\n\n ***************************Moving image...***************************',
     );
     debugPrint('Source: $sourcePath');
     debugPrint('Destination: $destinationPath');
@@ -53,10 +53,16 @@ class SortogramMngStrg {
         destinationPath: destinationPath,
       );
       debugPrint('Move operation ${result ? 'successful' : 'failed'}');
+      debugPrint(
+        '\n\n\n ********************Moving Done...***************************',
+      );
       return result;
     } catch (e, stack) {
       debugPrint('Error moving image: $e');
       debugPrint('Stack trace: $stack');
+      debugPrint(
+        '\n\n\n ************************Moving Not Done... Error occure ***************************',
+      );
       rethrow;
     }
   }

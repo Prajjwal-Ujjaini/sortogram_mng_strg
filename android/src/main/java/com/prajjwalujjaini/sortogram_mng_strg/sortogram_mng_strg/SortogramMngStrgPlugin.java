@@ -28,6 +28,10 @@ import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.io.BufferedInputStream;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
@@ -39,21 +43,21 @@ import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
 
 /** SortogramMngStrgPlugin */
-public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler, ActivityAware, PluginRegistry.RequestPermissionsResultListener, PluginRegistry.ActivityResultListener {
+public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler, ActivityAware,
+    PluginRegistry.RequestPermissionsResultListener, PluginRegistry.ActivityResultListener {
   private static final String TAG = "SortogramMngStrg";
   private static final int PERMISSION_REQUEST_CODE = 123;
   private static final int MANAGE_STORAGE_PERMISSION_REQUEST_CODE = 456;
-  
+
   private MethodChannel channel;
   private Context context;
   private Activity activity;
   private Result pendingResult;
   private String pendingSourcePath;
   private String pendingDestPath;
-  
+
   private static final Set<String> SUPPORTED_IMAGE_TYPES = new HashSet<>(Arrays.asList(
-    "jpg", "jpeg", "png", "webp"
-  ));
+      "jpg", "jpeg", "png", "webp"));
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
@@ -157,11 +161,11 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
       Log.d(TAG, "MANAGE_EXTERNAL_STORAGE permission already granted");
     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       Log.d(TAG, "Android 6+ (API 23+): Checking WRITE_EXTERNAL_STORAGE permission");
-      if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-          != PackageManager.PERMISSION_GRANTED) {
+      if (ContextCompat.checkSelfPermission(context,
+          Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
         Log.i(TAG, "Requesting WRITE_EXTERNAL_STORAGE permission");
         ActivityCompat.requestPermissions(activity,
-            new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+            new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE },
             PERMISSION_REQUEST_CODE);
         return;
       }
@@ -233,20 +237,25 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
     Log.d(TAG, "Moving file from: " + sourceFile.getAbsolutePath() + " to: " + destFile.getAbsolutePath());
     long startTime = System.currentTimeMillis();
     long fileSize = sourceFile.length();
-    
+
     // First verify we can delete the source file
     if (!sourceFile.canWrite()) {
       Log.e(TAG, "Source file is not writable, cannot delete after copy");
       throw new IOException("Source file is not writable");
     }
-    
+
     boolean success = false;
-    try (InputStream in = new FileInputStream(sourceFile);
-         OutputStream out = new FileOutputStream(destFile)) {
-      byte[] buffer = new byte[4096];
+    FileInputStream in = null;
+    FileOutputStream out = null;
+
+    try {
+      in = new FileInputStream(sourceFile);
+      out = new FileOutputStream(destFile);
+
+      byte[] buffer = new byte[8192]; // Increased buffer size
       int length;
       long totalBytesRead = 0;
-      
+
       while ((length = in.read(buffer)) > 0) {
         out.write(buffer, 0, length);
         totalBytesRead += length;
@@ -254,27 +263,50 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
           Log.d(TAG, String.format("Copy progress: %.1f%%", (totalBytesRead * 100.0) / fileSize));
         }
       }
-      
+
       // Force write to disk
       out.flush();
-      
+      out.getFD().sync(); // Ensure data is written to disk
+
+      // Close streams before further operations
+      in.close();
+      out.close();
+      in = null;
+      out = null;
+
+      // Verify destination file exists
+      if (!destFile.exists()) {
+        Log.e(TAG, "Destination file does not exist after copy");
+        throw new IOException("Destination file was not created");
+      }
+
       // Verify the copy was successful by checking file sizes
+      Log.i(TAG,
+          "????????????????????????????  Verify the copy was successful by checking file sizes ************************");
       if (destFile.length() != sourceFile.length()) {
         Log.e(TAG, "File sizes don't match after copy");
         destFile.delete(); // Clean up the incomplete copy
         throw new IOException("File copy was incomplete");
       }
-      
+
+      // Verify file contents (optional, but more thorough)
+      if (!verifyFileContents(sourceFile, destFile)) {
+        Log.e(TAG, "File contents verification failed");
+        destFile.delete();
+        throw new IOException("File contents do not match");
+      }
+
       // Try to delete the source file
       if (!sourceFile.delete()) {
         Log.e(TAG, "Failed to delete source file");
         destFile.delete(); // Clean up the destination since move failed
         throw new IOException("Could not delete source file");
       }
-      
+
       success = true;
       Log.d(TAG, "File successfully moved");
       Log.d(TAG, "Move operation completed in " + (System.currentTimeMillis() - startTime) + "ms");
+
     } catch (IOException e) {
       Log.e(TAG, "Error during file move: " + e.getMessage());
       // Clean up destination file if it exists
@@ -282,9 +314,66 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
         destFile.delete();
       }
       throw e;
+    } finally {
+      // Clean up resources in finally block
+      if (in != null) {
+        try {
+          in.close();
+        } catch (IOException e) {
+          Log.w(TAG, "Error closing input stream: " + e.getMessage());
+        }
+      }
+      if (out != null) {
+        try {
+          out.close();
+        } catch (IOException e) {
+          Log.w(TAG, "Error closing output stream: " + e.getMessage());
+        }
+      }
     }
-    
+
+    Log.e(TAG, "At time of return success from moveFile function : " + success);
     return success;
+  }
+
+  // Add this new helper method for content verification
+  private boolean verifyFileContents(File sourceFile, File destFile) throws IOException {
+    if (sourceFile.length() != destFile.length()) {
+      Log.d(TAG, "File size mismatch during verification");
+      return false;
+    }
+
+    try {
+      String sourceHash = calculateMD5(sourceFile);
+      String destHash = calculateMD5(destFile);
+
+      boolean matches = sourceHash != null && sourceHash.equals(destHash);
+      Log.d(TAG, "File hash comparison - Source: " + sourceHash + ", Dest: " + destHash);
+
+      return matches;
+    } catch (Exception e) {
+      Log.e(TAG, "Error during hash verification: " + e.getMessage());
+      throw new IOException("Hash verification failed", e);
+    }
+  }
+
+  private String calculateMD5(File file) throws IOException {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("MD5");
+      try (InputStream is = new BufferedInputStream(new FileInputStream(file))) {
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = is.read(buffer)) > 0) {
+          digest.update(buffer, 0, read);
+        }
+        byte[] md5sum = digest.digest();
+        BigInteger bigInt = new BigInteger(1, md5sum);
+        return String.format("%032x", bigInt);
+      }
+    } catch (NoSuchAlgorithmException e) {
+      Log.e(TAG, "MD5 algorithm not available");
+      throw new IOException("MD5 algorithm not available", e);
+    }
   }
 
   private void updateMediaStore(File sourceFile, File destFile) {
@@ -296,7 +385,7 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
     Uri contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
     int deletedRows = resolver.delete(contentUri,
         MediaStore.Images.Media.DATA + "=?",
-        new String[]{sourceFile.getAbsolutePath()});
+        new String[] { sourceFile.getAbsolutePath() });
     Log.d(TAG, "Deleted " + deletedRows + " rows from MediaStore");
 
     // Add the new entry
@@ -327,8 +416,8 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
     // Ensure the media scanner is aware of the changes
     Log.d(TAG, "Triggering media scanner for: " + destFile.getAbsolutePath());
     MediaScannerConnection.scanFile(context,
-        new String[]{destFile.getAbsolutePath()},
-        new String[]{mimeType},
+        new String[] { destFile.getAbsolutePath() },
+        new String[] { mimeType },
         (path, uri1) -> Log.d(TAG, "Media scan completed for: " + path + " URI: " + uri1));
   }
 
@@ -374,9 +463,9 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
 
       // Query MediaStore for the real path
       ContentResolver resolver = context.getContentResolver();
-      String[] projection = {MediaStore.Images.Media.DATA};
+      String[] projection = { MediaStore.Images.Media.DATA };
       String selection = MediaStore.Images.Media.DATA + "=?";
-      String[] selectionArgs = {path};
+      String[] selectionArgs = { path };
 
       try (Cursor cursor = resolver.query(
           MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -388,7 +477,7 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
         if (cursor != null && cursor.moveToFirst()) {
           String realPath = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA));
           Log.d(TAG, "Found real path: " + realPath);
-          
+
           // Verify the file exists
           if (new File(realPath).exists()) {
             result.success(realPath);
