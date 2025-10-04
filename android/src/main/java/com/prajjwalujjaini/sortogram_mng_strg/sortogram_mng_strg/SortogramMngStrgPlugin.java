@@ -76,11 +76,20 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
         String destPath = call.argument("destinationPath");
         Log.d(TAG, "Moving image from: " + sourcePath + " to: " + destPath);
         if (sourcePath == null || destPath == null) {
-          Log.e(TAG, "Invalid arguments: source or destination path is null");
-          result.error("INVALID_ARGUMENTS", "Source and destination paths are required", null);
+          result.error("INVALID_ARGUMENTS", "Source or destination path is null", null);
           return;
         }
         handleMoveImage(sourcePath, destPath, result);
+        break;
+      case "copyImage":
+        sourcePath = call.argument("sourcePath");
+        destPath = call.argument("destinationPath");
+        Log.d(TAG, "Copying image from: " + sourcePath + " to: " + destPath);
+        if (sourcePath == null || destPath == null) {
+          result.error("INVALID_ARGUMENTS", "Source or destination path is null", null);
+          return;
+        }
+        handleCopyImage(sourcePath, destPath, result);
         break;
       case "getRealPath":
         String path = call.argument("path");
@@ -374,6 +383,177 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
       Log.e(TAG, "MD5 algorithm not available");
       throw new IOException("MD5 algorithm not available", e);
     }
+  }
+
+  private void handleCopyImage(String sourcePath, String destPath, Result result) {
+    Log.d(TAG, "Handling image copy request");
+    if (activity == null) {
+      Log.e(TAG, "Activity is null, cannot proceed with image copy");
+      result.error("ACTIVITY_NULL", "Activity is null", null);
+      return;
+    }
+
+    pendingSourcePath = sourcePath;
+    pendingDestPath = destPath;
+    pendingResult = result;
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      Log.d(TAG, "Android 11+ (API 30+): Checking MANAGE_EXTERNAL_STORAGE permission");
+      if (!Environment.isExternalStorageManager()) {
+        Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+        activity.startActivityForResult(intent, MANAGE_STORAGE_PERMISSION_REQUEST_CODE);
+        return;
+      }
+      Log.d(TAG, "MANAGE_EXTERNAL_STORAGE permission already granted");
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      String[] permissions = {
+          Manifest.permission.READ_EXTERNAL_STORAGE,
+          Manifest.permission.WRITE_EXTERNAL_STORAGE
+      };
+
+      for (String permission : permissions) {
+        if (ContextCompat.checkSelfPermission(activity, permission) != PackageManager.PERMISSION_GRANTED) {
+          ActivityCompat.requestPermissions(activity, permissions, PERMISSION_REQUEST_CODE);
+          return;
+        }
+      }
+    }
+
+    // If we reach here, we have the necessary permissions
+    performImageCopy(sourcePath, destPath, result);
+  }
+
+  private void performImageCopy(String sourcePath, String destPath, Result result) {
+    Log.d(TAG, "Starting image copy operation");
+    Log.d(TAG, "Source: " + sourcePath);
+    Log.d(TAG, "Destination: " + destPath);
+
+    File sourceFile = new File(sourcePath);
+    File destDir = new File(destPath).getParentFile();
+    File destFile = new File(destPath);
+
+    try {
+      if (!sourceFile.exists()) {
+        throw new IOException("Source file does not exist: " + sourcePath);
+      }
+
+      if (!destDir.exists() && !destDir.mkdirs()) {
+        throw new IOException("Could not create destination directory: " + destDir);
+      }
+
+      if (destFile.exists()) {
+        throw new IOException("Destination file already exists: " + destPath);
+      }
+
+      String fileExtension = getFileExtension(sourcePath).toLowerCase();
+      Log.d(TAG, "File extension: " + fileExtension);
+      if (!SUPPORTED_IMAGE_TYPES.contains(fileExtension)) {
+        throw new IOException("Unsupported file type: " + fileExtension);
+      }
+
+      // Copy the file
+      Log.d(TAG, "Copying file...");
+      boolean success = copyFile(sourceFile, destFile);
+      if (!success) {
+        throw new IOException("Failed to copy file");
+      }
+      Log.d(TAG, "File copied successfully");
+
+      // Update MediaStore for the new file
+      updateMediaStoreForCopy(sourceFile, destFile);
+      Log.d(TAG, "MediaStore updated successfully");
+      result.success(true);
+
+    } catch (Exception e) {
+      Log.e(TAG, "Error during copy operation: " + e.getMessage());
+      if (destFile.exists()) {
+        destFile.delete(); // Clean up failed copy
+      }
+      result.error("UNKNOWN_ERROR", e.getMessage(), null);
+    }
+  }
+
+  private boolean copyFile(File sourceFile, File destFile) throws IOException {
+    Log.d(TAG, "Copying file from: " + sourceFile.getAbsolutePath() + " to: " + destFile.getAbsolutePath());
+    long startTime = System.currentTimeMillis();
+    long fileSize = sourceFile.length();
+
+    boolean success = false;
+    FileInputStream in = null;
+    FileOutputStream out = null;
+
+    try {
+      in = new FileInputStream(sourceFile);
+      out = new FileOutputStream(destFile);
+
+      byte[] buffer = new byte[8192];
+      int length;
+      long totalBytesRead = 0;
+
+      while ((length = in.read(buffer)) > 0) {
+        out.write(buffer, 0, length);
+        totalBytesRead += length;
+        if (totalBytesRead % (1024 * 1024) == 0) {
+          Log.d(TAG, String.format("Copy progress: %.1f%%", (totalBytesRead * 100.0) / fileSize));
+        }
+      }
+
+      // Force write to disk
+      out.flush();
+      out.getFD().sync();
+
+      // Verify destination file exists and contents match
+      if (!verifyFileContents(sourceFile, destFile)) {
+        Log.e(TAG, "File verification failed");
+        throw new IOException("File verification failed");
+      }
+
+      success = true;
+      Log.d(TAG, "File successfully copied");
+      Log.d(TAG, "Copy operation completed in " + (System.currentTimeMillis() - startTime) + "ms");
+
+    } catch (IOException e) {
+      Log.e(TAG, "Error during file copy: " + e.getMessage());
+      throw e;
+    } finally {
+      if (in != null) {
+        try {
+          in.close();
+        } catch (IOException e) {
+          Log.w(TAG, "Error closing input stream: " + e.getMessage());
+        }
+      }
+      if (out != null) {
+        try {
+          out.close();
+        } catch (IOException e) {
+          Log.w(TAG, "Error closing output stream: " + e.getMessage());
+        }
+      }
+    }
+
+    return success;
+  }
+
+  private void updateMediaStoreForCopy(File sourceFile, File destFile) {
+    Log.d(TAG, "Updating MediaStore for copied file");
+    ContentResolver resolver = context.getContentResolver();
+
+    // Add the new entry only (no need to delete anything since it's a copy)
+    ContentValues values = new ContentValues();
+    values.put(MediaStore.Images.Media.DATA, destFile.getAbsolutePath());
+    values.put(MediaStore.Images.Media.MIME_TYPE, getMimeType(destFile.getName()));
+    values.put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000);
+    values.put(MediaStore.Images.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000);
+
+    Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+    Log.d(TAG, "New MediaStore entry URI: " + uri);
+
+    // Trigger media scanner for the new file
+    MediaScannerConnection.scanFile(context,
+        new String[] { destFile.getAbsolutePath() },
+        new String[] { getMimeType(destFile.getName()) },
+        (path, uri1) -> Log.d(TAG, "Media scan completed for: " + path + " URI: " + uri1));
   }
 
   private void updateMediaStore(File sourceFile, File destFile) {

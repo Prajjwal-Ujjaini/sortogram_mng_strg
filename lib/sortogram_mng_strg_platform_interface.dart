@@ -51,4 +51,27 @@ abstract class SortogramMngStrgPlatform extends PlatformInterface {
     debugPrint('[Platform Interface] Destination: $destinationPath');
     throw UnimplementedError('moveImage() has not been implemented.');
   }
+
+  /// Copies an image file from one location to another while properly updating the MediaStore
+  ///
+  /// [sourcePath] is the absolute path to the source image file
+  /// [destinationPath] is the absolute path where the image should be copied to
+  ///
+  /// Returns `true` if the copy was successful
+  ///
+  /// Throws PlatformException if:
+  /// - The source file doesn't exist
+  /// - The destination already exists
+  /// - The file type is not supported (supported: jpg, jpeg, png, webp)
+  /// - Required permissions are not granted
+  /// - Any other error occurs during the copy operation
+  Future<bool> copyImage({
+    required String sourcePath,
+    required String destinationPath,
+  }) {
+    debugPrint('[Platform Interface] copyImage() called but not implemented');
+    debugPrint('[Platform Interface] Source: $sourcePath');
+    debugPrint('[Platform Interface] Destination: $destinationPath');
+    throw UnimplementedError('copyImage() has not been implemented.');
+  }
 }

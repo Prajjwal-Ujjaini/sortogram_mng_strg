@@ -26,9 +26,36 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
       appBar: AppBar(
         title: const Text('Photo Details'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.drive_file_move),
-            onPressed: _showMoveDialog,
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'move') {
+                _showMoveDialog();
+              } else if (value == 'copy') {
+                _showCopyDialog();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem(
+                value: 'move',
+                child: Row(
+                  children: [
+                    Icon(Icons.drive_file_move),
+                    SizedBox(width: 8),
+                    Text('Move to Album'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'copy',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_copy),
+                    SizedBox(width: 8),
+                    Text('Copy to Album'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -93,6 +120,130 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
 
     if (destinationAlbum != null) {
       await _movePhotoToAlbum(destinationAlbum);
+    }
+  }
+
+  Future<void> _showCopyDialog() async {
+    // Get all albums to show as destination options
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.image,
+      hasAll: false,
+    );
+
+    if (!mounted) return;
+
+    final destinationAlbum = await showDialog<AssetPathEntity>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Copy to Album'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 300,
+          child: ListView.builder(
+            itemCount: albums.length,
+            itemBuilder: (context, index) {
+              final album = albums[index];
+              return ListTile(
+                title: Text(album.name),
+                onTap: () => Navigator.pop(context, album),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    if (destinationAlbum != null) {
+      await _copyPhotoToAlbum(destinationAlbum);
+    }
+  }
+
+  Future<void> _copyPhotoToAlbum(AssetPathEntity destinationAlbum) async {
+    setState(() {
+      _isMoving = true;
+      _statusMessage = 'Preparing to copy photo...';
+    });
+
+    try {
+      // Get the source file
+      final file = await widget.photo.file;
+      if (file == null) {
+        setState(() {
+          _statusMessage = 'Error: Could not access the photo file';
+          _isMoving = false;
+        });
+        return;
+      }
+
+      // Get the destination directory
+      final appDir = await getExternalStorageDirectory();
+      if (appDir == null) {
+        setState(() {
+          _statusMessage = 'Error: Could not access storage';
+          _isMoving = false;
+        });
+        return;
+      }
+
+      // Create the destination path
+      final destinationDir = Directory(
+        path.join(
+          appDir.parent.parent.parent.parent.path,
+          'Pictures',
+          destinationAlbum.name,
+        ),
+      );
+
+      // Create directory if it doesn't exist
+      if (!await destinationDir.exists()) {
+        await destinationDir.create(recursive: true);
+      }
+
+      // Generate destination file path
+      final fileName = path.basename(file.path);
+      final destinationPath = path.join(destinationDir.path, fileName);
+
+      // Copy the file using our plugin
+      setState(() => _statusMessage = 'Copying photo...');
+      final plugin = SortogramMngStrg();
+      final success = await plugin.copyImage(
+        sourcePath: file.path,
+        destinationPath: destinationPath,
+      );
+
+      if (!mounted) return;
+
+      if (!success) {
+        setState(() {
+          _statusMessage = 'Failed to copy photo';
+          _isMoving = false;
+        });
+        return;
+      }
+
+      // Show success and refresh the screen
+      setState(() {
+        _statusMessage = 'Photo copied successfully';
+        _isMoving = false;
+      });
+
+      if (!mounted) return;
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo copied successfully')),
+      );
+
+      // Refresh the app to show the new copy
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const MyApp()),
+        (route) => false,
+      );
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error copying photo: $e';
+        _isMoving = false;
+      });
     }
   }
 

@@ -62,4 +62,41 @@ class MethodChannelSortogramMngStrg extends SortogramMngStrgPlatform {
       rethrow;
     }
   }
+
+  @override
+  Future<bool> copyImage({
+    required String sourcePath,
+    required String destinationPath,
+  }) async {
+    debugPrint('[Method Channel] Copying image...');
+    debugPrint('[Method Channel] Source: $sourcePath');
+    debugPrint('[Method Channel] Destination: $destinationPath');
+
+    try {
+      debugPrint('[Method Channel] Invoking native copyImage method');
+      final result = await methodChannel.invokeMethod<bool>('copyImage', {
+        'sourcePath': sourcePath,
+        'destinationPath': destinationPath,
+      });
+      debugPrint('[Method Channel] Copy result: ${result ?? false}');
+      return result ?? false;
+    } catch (e, stack) {
+      debugPrint('[Method Channel] Error during copy operation: $e');
+      debugPrint('[Method Channel] Stack trace: $stack');
+
+      if (e is PlatformException) {
+        debugPrint('[Method Channel] Platform exception details:');
+        debugPrint('  Code: ${e.code}');
+        debugPrint('  Message: ${e.message}');
+        debugPrint('  Details: ${e.details}');
+
+        throw ImageMoveException(
+          e.code,
+          e.message ?? 'Unknown error',
+          e.details,
+        );
+      }
+      rethrow;
+    }
+  }
 }
