@@ -397,25 +397,38 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
     pendingDestPath = destPath;
     pendingResult = result;
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      Log.d(TAG, "Android 11+ (API 30+): Checking MANAGE_EXTERNAL_STORAGE permission");
-      if (!Environment.isExternalStorageManager()) {
-        Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
-        activity.startActivityForResult(intent, MANAGE_STORAGE_PERMISSION_REQUEST_CODE);
+    // For Android 13+ (API 33+), we need READ_MEDIA_IMAGES
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      Log.d(TAG, "Android 13+ (API 33+): Checking READ_MEDIA_IMAGES permission");
+      if (ContextCompat.checkSelfPermission(activity,
+          Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+        Log.i(TAG, "Requesting READ_MEDIA_IMAGES permission");
+        ActivityCompat.requestPermissions(activity,
+            new String[] { Manifest.permission.READ_MEDIA_IMAGES },
+            PERMISSION_REQUEST_CODE);
         return;
       }
-      Log.d(TAG, "MANAGE_EXTERNAL_STORAGE permission already granted");
-    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+    }
+    // For Android 6-12, we need READ_EXTERNAL_STORAGE and WRITE_EXTERNAL_STORAGE
+    else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      Log.d(TAG, "Android 6-12: Checking storage permissions");
       String[] permissions = {
           Manifest.permission.READ_EXTERNAL_STORAGE,
           Manifest.permission.WRITE_EXTERNAL_STORAGE
       };
 
+      boolean needsPermissions = false;
       for (String permission : permissions) {
         if (ContextCompat.checkSelfPermission(activity, permission) != PackageManager.PERMISSION_GRANTED) {
-          ActivityCompat.requestPermissions(activity, permissions, PERMISSION_REQUEST_CODE);
-          return;
+          needsPermissions = true;
+          break;
         }
+      }
+
+      if (needsPermissions) {
+        Log.i(TAG, "Requesting storage permissions");
+        ActivityCompat.requestPermissions(activity, permissions, PERMISSION_REQUEST_CODE);
+        return;
       }
     }
 
@@ -427,6 +440,7 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
     Log.d(TAG, "Starting image copy operation");
     Log.d(TAG, "Source: " + sourcePath);
     Log.d(TAG, "Destination: " + destPath);
+    Log.i(TAG, "This is a COPY operation - source file will be preserved");
 
     File sourceFile = new File(sourcePath);
     File destDir = new File(destPath).getParentFile();
@@ -477,6 +491,11 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
     Log.d(TAG, "Copying file from: " + sourceFile.getAbsolutePath() + " to: " + destFile.getAbsolutePath());
     long startTime = System.currentTimeMillis();
     long fileSize = sourceFile.length();
+
+    if (!sourceFile.canRead()) {
+      Log.e(TAG, "Source file is not readable");
+      throw new IOException("Source file is not readable");
+    }
 
     boolean success = false;
     FileInputStream in = null;
@@ -679,15 +698,33 @@ public class SortogramMngStrgPlugin implements FlutterPlugin, MethodCallHandler,
   @Override
   public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
     if (requestCode == PERMISSION_REQUEST_CODE) {
-      if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+      boolean allPermissionsGranted = true;
+      for (int result : grantResults) {
+        if (result != PackageManager.PERMISSION_GRANTED) {
+          allPermissionsGranted = false;
+          break;
+        }
+      }
+
+      if (allPermissionsGranted) {
         if (pendingSourcePath != null && pendingDestPath != null && pendingResult != null) {
-          performImageMove(pendingSourcePath, pendingDestPath, pendingResult);
+          // Check if this was for a move or copy operation based on the permissions
+          // requested
+          if (permissions.length == 1 &&
+              (permissions[0].equals(Manifest.permission.READ_MEDIA_IMAGES) ||
+                  permissions[0].equals(Manifest.permission.READ_EXTERNAL_STORAGE))) {
+            // This was a copy operation (only read permission requested)
+            performImageCopy(pendingSourcePath, pendingDestPath, pendingResult);
+          } else {
+            // This was a move operation (write permission also requested)
+            performImageMove(pendingSourcePath, pendingDestPath, pendingResult);
+          }
           clearPendingOperation();
           return true;
         }
       } else {
         if (pendingResult != null) {
-          pendingResult.error("PERMISSION_DENIED", "Storage permission denied", null);
+          pendingResult.error("PERMISSION_DENIED", "Required permissions were denied", null);
           clearPendingOperation();
         }
       }
